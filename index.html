@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HOCO Weather Cloud Mapper</title>
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css' rel='stylesheet' />
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; background: #1a1a1a; }
+        #sidebar { width: 380px; background: #242424; color: #e0e0e0; padding: 20px; overflow-y: auto; border-right: 1px solid #444; box-shadow: 2px 0 10px rgba(0,0,0,0.5); }
+        #map { flex-grow: 1; }
+        h2 { color: #3498db; margin-top: 0; }
+        .control-group { margin-bottom: 25px; padding-bottom: 15px; border-bottom: 1px solid #333; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 0.85em; text-transform: uppercase; color: #888; }
+        select, input[type="datetime-local"], input[type="text"] { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #444; background: #121212; color: white; box-sizing: border-box; }
+        .model-grid { display: grid; grid-template-columns: 1fr 80px; gap: 10px; align-items: center; margin-bottom: 8px; }
+        .model-label { display: flex; align-items: center; gap: 8px; font-size: 0.9em; }
+        input[type="number"] { padding: 5px; background: #121212; border: 1px solid #444; color: #2ecc71; border-radius: 4px; text-align: center; }
+        button { width: 100%; padding: 15px; background: #27ae60; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1em; transition: 0.3s; }
+        button:hover { background: #2ecc71; box-shadow: 0 0 15px rgba(46, 204, 113, 0.4); }
+        .status { margin-top: 15px; font-size: 0.85em; padding: 10px; border-radius: 4px; display: none; }
+        .status.running { display: block; background: #2980b9; color: white; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <h2>HOCO Cloud Engine</h2>
+    
+    <div class="control-group">
+        <label>Time Window (UTC)</label>
+        <input type="datetime-local" id="startTime" style="margin-bottom: 10px;">
+        <input type="datetime-local" id="endTime">
+    </div>
+
+    <div class="control-group">
+        <label>Region</label>
+        <select id="region">
+            <option value="UK">United Kingdom</option>
+            <option value="England">England</option>
+            <option value="Ireland and Northern Ireland">Ireland / NI</option>
+        </select>
+    </div>
+
+    <div class="control-group">
+        <label>Weather Parameter</label>
+        <select id="weatherType">
+            <option value="lightning">Lightning Density</option>
+            <option value="supercell">Supercell Composite</option>
+            <option value="tornado">Tornado Parameter</option>
+            <option value="snow">Snow Accumulation</option>
+        </select>
+    </div>
+
+    <div class="control-group">
+        <label>Model Weighting</label>
+        <div id="modelList"></div>
+    </div>
+
+    <button onclick="triggerGitHubAction()">Launch Cloud Script</button>
+    <div id="statusBox" class="status"></div>
+</div>
+
+<div id="map"></div>
+
+<script>
+    // --- User Configuration ---
+    const GITHUB_TOKEN = "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"; // Replace with Personal Access Token
+    const REPO_OWNER = "Handry-Outlook";
+    const REPO_NAME = "HOCO";
+    const WORKFLOW_ID = "process_weather.yml"; // The filename in .github/workflows/
+    
+    mapboxgl.accessToken = 'pk.eyJ1IjoiaGFuZHJ5MjAxOTEwMjYiLCJhIjoiY21jYWg2eG1lMDNkYTJxczVyOWM5bW9mciJ9.bA-qxiByTB_RseY1fgU4rg';
+
+    const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/dark-v11',
+        center: [-2.5, 54.5],
+        zoom: 5
+    });
+
+    // Models supported by cloud.py
+    const models = ['frahd', 'rpdid2', 'swisseu', 'ez', 'swissnow', 'ezswiss', 'ukmo2km', 'swissmrf', 'hardmi'];
+    const modelList = document.getElementById('modelList');
+
+    // Dynamically build model sliders
+    models.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'model-grid';
+        div.innerHTML = `
+            <div class="model-label">
+                <input type="checkbox" id="check_${m}" checked>
+                <span>${m.toUpperCase()}</span>
+            </div>
+            <input type="number" id="weight_${m}" value="1.0" step="0.1" min="0" max="5">
+        `;
+        modelList.appendChild(div);
+    });
+
+    function formatDateForPy(dateStr) {
+        if (!dateStr) return "";
+        const d = new Date(dateStr);
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        const hours = String(d.getHours()).padStart(2, '0');
+        const mins = String(d.getMinutes()).padStart(2, '0');
+        return `${day}/${month}/${year} ${hours}:${mins}`; // Format matching cloud.py parser
+    }
+
+    async function triggerGitHubAction() {
+        const statusBox = document.getElementById('statusBox');
+        const jobUuid = 'job-' + Math.random().toString(36).substr(2, 9);
+        
+        // 1. Collect inputs
+        const startTime = formatDateForPy(document.getElementById('startTime').value);
+        const endTime = formatDateForPy(document.getElementById('endTime').value);
+        const weather = document.getElementById('weatherType').value;
+        const region = document.getElementById('region').value;
+
+        // 2. Build weight object
+        let weights = {};
+        models.forEach(m => {
+            if (document.getElementById(`check_${m}`).checked) {
+                weights[m] = parseFloat(document.getElementById(`weight_${m}`).value);
+            }
+        });
+
+        statusBox.className = "status running";
+        statusBox.innerText = `Triggering GitHub Runner for Job: ${jobUuid}...`;
+
+        // 3. GitHub API Request
+        try {
+            const response = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${WORKFLOW_ID}/dispatches`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `token ${GITHUB_TOKEN}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    ref: 'main', 
+                    inputs: {
+                        uuid: jobUuid,
+                        start: startTime,
+                        end: endTime,
+                        region: region,
+                        weather: weather
+                    }
+                })
+            });
+
+            if (response.status === 204) {
+                statusBox.innerText = "Success! GitHub Runner started. Processing usually takes 2-4 minutes. Map will refresh automatically.";
+                // In a production app, you would poll Mapbox or an S3 bucket here to see when the GeoJSON arrives.
+            } else {
+                const err = await response.json();
+                statusBox.innerText = "Error: " + err.message;
+            }
+        } catch (e) {
+            statusBox.innerText = "Connection Failed: " + e.message;
+        }
+    }
+</script>
+
+</body>
+</html>
