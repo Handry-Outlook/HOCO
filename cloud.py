@@ -379,39 +379,41 @@ def export_risk_to_geojson(data_array, calc_factor, output_filepath, bounds=None
 
 def upload_to_mapbox(filepath, tileset_name):
     """
-    Detailed debug version of the Mapbox upload function.
+    VERBOSE UPLOAD: Requests credentials, uploads to S3, and notifies Mapbox.
+    Includes time-stamped logs to track progress in GitHub Actions.
     """
-    # 1. Fetch credentials from environment
     token = os.getenv("MAPBOX_ACCESS_TOKEN")
     user = os.getenv("MAPBOX_USERNAME")
 
-    print(f"\n--- MAPBOX UPLOAD DEBUG ---")
+    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] --- MAPBOX UPLOAD ATTEMPT ---")
     print(f"Target Tileset: {tileset_name}")
-    print(f"File Path: {filepath}")
+    print(f"Local File: {filepath}")
 
+    # 1. Validation
     if not token or not user:
-        print("CRITICAL ERROR: MAPBOX_ACCESS_TOKEN or MAPBOX_USERNAME is missing from environment variables!")
+        print("CRITICAL ERROR: MAPBOX_ACCESS_TOKEN or MAPBOX_USERNAME is missing!")
+        print(f"DEBUG: Token starts with 'sk.': {str(token).startswith('sk.')}")
         return None
 
     if not os.path.exists(filepath):
-        print(f"ERROR: The file {filepath} does not exist. Cannot upload.")
+        print(f"ERROR: File not found at {filepath}. Skipping upload.")
         return None
 
-    # Step 1: Get S3 Credentials from Mapbox
-    print("Step 1: Requesting temporary S3 credentials from Mapbox...")
+    # Step 1: Get S3 Credentials
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Step 1/3: Requesting S3 staging credentials...")
     creds_url = f"https://api.mapbox.com/uploads/v1/{user}/credentials?access_token={token}"
     
     try:
         resp = requests.get(creds_url)
         if resp.status_code != 200:
-            print(f"FAILED Step 1: Status {resp.status_code} - {resp.text}")
+            print(f"FAILED Step 1: {resp.status_code} - {resp.text}")
             return None
         
         creds = resp.json()
-        print("Step 1 Success: Received S3 credentials.")
+        print("Step 1 Success: Temporary S3 credentials received.")
 
-        # Step 2: Upload to S3
-        print(f"Step 2: Uploading {os.path.basename(filepath)} to Mapbox S3 staging...")
+        # Step 2: S3 Upload
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Step 2/3: Uploading to Mapbox S3 staging...")
         s3_client = boto3.client(
             's3',
             aws_access_key_id=creds['accessKeyId'],
@@ -419,10 +421,10 @@ def upload_to_mapbox(filepath, tileset_name):
             aws_session_token=creds['sessionToken']
         )
         s3_client.upload_file(filepath, creds['bucket'], creds['key'])
-        print("Step 2 Success: File uploaded to S3.")
+        print("Step 2 Success: File successfully staged on S3.")
 
-        # Step 3: Notify Mapbox to process the tileset
-        print("Step 3: Notifying Mapbox to create the tileset...")
+        # Step 3: Trigger Mapbox Processing
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Step 3/3: Notifying Mapbox to create Tileset...")
         upload_url = f"https://api.mapbox.com/uploads/v1/{user}?access_token={token}"
         payload = {
             "tileset": f"{user}.{tileset_name}",
@@ -431,17 +433,18 @@ def upload_to_mapbox(filepath, tileset_name):
         
         final_resp = requests.post(upload_url, json=payload)
         if final_resp.status_code == 201:
-            print(f"SUCCESS! Mapbox Upload ID: {final_resp.json().get('id')}")
-            print(f"Tileset ID will be: {user}.{tileset_name}")
+            job_id = final_resp.json().get('id')
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] SUCCESS! Mapbox Job Created.")
+            print(f"Final Tileset ID: {user}.{tileset_name}")
+            print(f"Mapbox Upload ID: {job_id}")
             return final_resp.json()
         else:
-            print(f"FAILED Step 3: Status {final_resp.status_code} - {final_resp.text}")
+            print(f"FAILED Step 3: {final_resp.status_code} - {final_resp.text}")
             return None
 
     except Exception as e:
-        print(f"UNEXPECTED ERROR during Mapbox upload: {str(e)}")
+        print(f"UNEXPECTED ERROR: {str(e)}")
         return None
-
 # --- Orchestration & Headless Selenium Execution ---
 def get_available_runs(model, start_time):
     interval = 3 if model in ['rpdid2', 'frahd', 'hardmi', 'swisseu'] else 1 if model == 'swissnow' else 6
