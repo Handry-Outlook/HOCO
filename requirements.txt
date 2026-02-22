@@ -1,0 +1,9 @@
+opencv-python-headless
+numpy
+matplotlib
+imageio
+requests
+selenium
+webdriver-manager
+boto3
+python-dotenv
