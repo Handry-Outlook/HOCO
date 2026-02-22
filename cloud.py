@@ -378,36 +378,38 @@ def export_risk_to_geojson(data_array, calc_factor, output_filepath, bounds=None
 
 def upload_to_mapbox(filepath, tileset_name):
     """
-    Handles the Mapbox Uploads API workflow with detailed logging.
-    1. Fetches temporary S3 credentials from Mapbox.
-    2. Uploads the GeoJSON file to the Mapbox S3 staging bucket.
-    3. Notifies Mapbox to begin processing the file into a tileset.
+    Detailed debug version of the Mapbox upload function.
     """
-    # FIX: These variables MUST match the names in your GitHub Secrets
-    # We fetch them inside the function to ensure they are fresh
+    # 1. Fetch credentials from environment
     token = os.getenv("MAPBOX_ACCESS_TOKEN")
     user = os.getenv("MAPBOX_USERNAME")
 
+    print(f"\n--- MAPBOX UPLOAD DEBUG ---")
+    print(f"Target Tileset: {tileset_name}")
+    print(f"File Path: {filepath}")
+
     if not token or not user:
-        print("CRITICAL ERROR: Mapbox credentials missing from Environment!")
-        print(f"DEBUG: Username set: {bool(user)} | Token set: {bool(token)}")
+        print("CRITICAL ERROR: MAPBOX_ACCESS_TOKEN or MAPBOX_USERNAME is missing from environment variables!")
         return None
 
-    print(f"\n--- Starting Mapbox Upload: {tileset_name} ---")
+    if not os.path.exists(filepath):
+        print(f"ERROR: The file {filepath} does not exist. Cannot upload.")
+        return None
 
-    # Step 1: Request S3 staging credentials from Mapbox
-    print("Step 1: Requesting temporary S3 credentials from Mapbox API...")
+    # Step 1: Get S3 Credentials from Mapbox
+    print("Step 1: Requesting temporary S3 credentials from Mapbox...")
     creds_url = f"https://api.mapbox.com/uploads/v1/{user}/credentials?access_token={token}"
     
     try:
         resp = requests.get(creds_url)
         if resp.status_code != 200:
-            print(f"FAILED Step 1: {resp.status_code} - {resp.text}")
+            print(f"FAILED Step 1: Status {resp.status_code} - {resp.text}")
             return None
+        
         creds = resp.json()
-        print("Successfully obtained S3 credentials.")
+        print("Step 1 Success: Received S3 credentials.")
 
-        # Step 2: Upload the local file to the Mapbox S3 staging bucket
+        # Step 2: Upload to S3
         print(f"Step 2: Uploading {os.path.basename(filepath)} to Mapbox S3 staging...")
         s3_client = boto3.client(
             's3',
@@ -416,10 +418,10 @@ def upload_to_mapbox(filepath, tileset_name):
             aws_session_token=creds['sessionToken']
         )
         s3_client.upload_file(filepath, creds['bucket'], creds['key'])
-        print("S3 Upload successful.")
+        print("Step 2 Success: File uploaded to S3.")
 
-        # Step 3: Tell Mapbox to create the Tileset from the S3 file
-        print("Step 3: Notifying Mapbox to begin tileset processing...")
+        # Step 3: Notify Mapbox to process the tileset
+        print("Step 3: Notifying Mapbox to create the tileset...")
         upload_url = f"https://api.mapbox.com/uploads/v1/{user}?access_token={token}"
         payload = {
             "tileset": f"{user}.{tileset_name}",
@@ -428,16 +430,15 @@ def upload_to_mapbox(filepath, tileset_name):
         
         final_resp = requests.post(upload_url, json=payload)
         if final_resp.status_code == 201:
-            upload_id = final_resp.json().get('id')
-            print(f"SUCCESS! Mapbox job created. Upload ID: {upload_id}")
-            print(f"Your tileset ID will be: {user}.{tileset_name}")
+            print(f"SUCCESS! Mapbox Upload ID: {final_resp.json().get('id')}")
+            print(f"Tileset ID will be: {user}.{tileset_name}")
             return final_resp.json()
         else:
-            print(f"FAILED Step 3: {final_resp.status_code} - {final_resp.text}")
+            print(f"FAILED Step 3: Status {final_resp.status_code} - {final_resp.text}")
             return None
 
     except Exception as e:
-        print(f"UNEXPECTED ERROR during upload: {str(e)}")
+        print(f"UNEXPECTED ERROR during Mapbox upload: {str(e)}")
         return None
 
 # --- Orchestration & Headless Selenium Execution ---
