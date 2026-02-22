@@ -26,8 +26,9 @@ from selenium.webdriver.chrome.options import Options
 
 # --- Environment Setup ---
 load_dotenv()
-MAPBOX_ACCESS_TOKEN = os.getenv("pk.eyJ1IjoiaGFuZHJ5MjAxOTEwMjYiLCJhIjoiY21jYWg2eG1lMDNkYTJxczVyOWM5bW9mciJ9.bA-qxiByTB_RseY1fgU4rg")
-MAPBOX_USERNAME = os.getenv("handry20191026")
+# --- Correct lines 31-32 ---
+MAPBOX_ACCESS_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN")
+MAPBOX_USERNAME = os.getenv("MAPBOX_USERNAME")
 
 # --- Constants & Colors ---
 reflectivity_colors = [
