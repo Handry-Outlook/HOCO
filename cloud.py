@@ -558,9 +558,41 @@ if __name__ == "__main__":
     parser.add_argument("--end", type=str, required=True, help="End time (DD/MM/YYYY HH:MM)")
     parser.add_argument("--region", type=str, default="UK", choices=REGIONS.keys(), help="Target region")
     parser.add_argument("--weather", nargs='+', required=True, choices=WEATHER_TYPES.keys(), help="Weather parameters")
+    
+    # NEW: Argument to receive the JSON weights from GitHub/Frontend
+    parser.add_argument("--weights", type=str, default="{}", help="JSON string of model weights")
+
     args = parser.parse_args()
     
-    start_dt = datetime.strptime(args.start, "%d/%m/%Y %H:%M")
-    end_dt = datetime.strptime(args.end, "%d/%m/%Y %H:%M")
+    # Parse the weights JSON
+    try:
+        user_weights = json.loads(args.weights)
+        # If the user passed an empty {} or specific models, 
+        # we merge them with your existing model_weights or replace them
+        if not user_weights:
+            active_weights = model_weights
+        else:
+            # Use only models provided by the user
+            active_weights = user_weights
+            print(f"Applying custom weights: {active_weights}")
+    except json.JSONDecodeError:
+        print("Warning: Invalid weights JSON. Falling back to default model weights.")
+        active_weights = model_weights
+
+    # Convert date strings to datetime objects
+    try:
+        start_dt = datetime.strptime(args.start, "%d/%m/%Y %H:%M")
+        end_dt = datetime.strptime(args.end, "%d/%m/%Y %H:%M")
+    except ValueError as e:
+        print(f"Error parsing dates: {e}. Ensure format is DD/MM/YYYY HH:MM")
+        exit(1)
     
-    process_weather_data(args.uuid, start_dt, end_dt, args.region, args.weather)
+    # Trigger the main process with the dynamic weights
+    process_weather_data(
+        args.uuid, 
+        start_dt, 
+        end_dt, 
+        args.region, 
+        args.weather, 
+        weights=active_weights
+    )
